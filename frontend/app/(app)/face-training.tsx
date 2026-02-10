@@ -1,21 +1,24 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Dimensions, Alert } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Dimensions, Alert, Platform } from 'react-native';
 import { Colors } from '../../constants/Colors';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CheckCircle2, ChevronLeft, ScanFace, Camera as CameraIcon } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useAuth } from '../../context/AuthContext';
+import { API_BASE_URL } from '../../constants/apiConfig';
 
 const { width } = Dimensions.get('window');
 const CAMERA_SIZE = width * 0.85;
 
 export default function FaceTrainingScreen() {
   const router = useRouter();
-  const { setFaceIdStatus, role } = useAuth();
+  const { userProfile, role, session } = useAuth();
   const [permission, requestPermission] = useCameraPermissions();
   const [step, setStep] = useState(0); // 0: Intro, 1: Scanning, 2: Complete
   const [isCapturing, setIsCapturing] = useState(false);
+  const cameraRef = useRef<CameraView>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
 
   // Security Check: Only Students allowed
   useEffect(() => {
@@ -31,6 +34,21 @@ export default function FaceTrainingScreen() {
     }
   }, [step, permission]);
 
+  // Web camera setup
+  useEffect(() => {
+    if (Platform.OS === 'web' && step === 1) {
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
+        .then(stream => {
+          const video = document.querySelector('video');
+          if (video) {
+            video.srcObject = stream;
+            videoRef.current = video;
+          }
+        })
+        .catch(err => console.log('Web camera error:', err));
+    }
+  }, [step]);
+
   const handleStart = () => {
     if (!permission) {
       requestPermission();
@@ -38,14 +56,69 @@ export default function FaceTrainingScreen() {
     setStep(1);
   };
 
-  const handleCapture = () => {
+  const handleCapture = async () => {
     setIsCapturing(true);
-    // Simulate capture delay and processing
-    setTimeout(() => {
+
+    try {
+      let base64Image: string | null = null;
+
+      // Web: Use canvas to capture from video element
+      if (Platform.OS === 'web') {
+        const video = document.querySelector('video');
+        if (video) {
+          const canvas = document.createElement('canvas');
+          canvas.width = video.videoWidth || 640;
+          canvas.height = video.videoHeight || 480;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(video, 0, 0);
+            base64Image = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+          }
+        }
+      } else {
+        // Native: Use expo-camera
+        if (cameraRef.current) {
+          const photo = await cameraRef.current.takePictureAsync({
+            base64: true,
+            quality: 0.7,
+          });
+          base64Image = photo?.base64 || null;
+        }
+      }
+
+      if (!base64Image) throw new Error("Failed to capture image");
+
+      // Get user data - use session metadata as fallback
+      const profileId = userProfile?.id || session?.user?.id;
+      const studentId = userProfile?.student_id || session?.user?.user_metadata?.student_id || 'unknown';
+      const fullName = userProfile?.full_name || session?.user?.user_metadata?.full_name || 'Student';
+
+      // Upload to Backend
+      const response = await fetch(`${API_BASE_URL}/api/v1/students/upload-biometrics`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          profile_id: profileId,
+          student_id: studentId,
+          full_name: fullName,
+          image: base64Image,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (response.ok) {
+        setStep(2);
+      } else {
+        Alert.alert("Error", result.detail || "Failed to upload biometrics.");
+        setIsCapturing(false);
+      }
+    } catch (e: any) {
+      Alert.alert("Error", e.message || "An error occurred during capture");
       setIsCapturing(false);
-      setStep(2);
-      setFaceIdStatus('pending'); // Set global status to pending
-    }, 2500);
+    }
   };
 
   if (role !== 'student') return null;
@@ -103,17 +176,17 @@ export default function FaceTrainingScreen() {
           <>
             <Text style={styles.stepTitle}>Align Face</Text>
             <Text style={styles.stepDesc}>Position your face within the circle.</Text>
-            
+
             <View style={styles.cameraContainer}>
-              <CameraView style={styles.camera} facing="front">
+              <CameraView ref={cameraRef} style={styles.camera} facing="front">
                 <View style={styles.cameraOverlay}>
                   <View style={[styles.scanCircle, isCapturing && styles.scanCircleActive]} />
                 </View>
               </CameraView>
-              
+
               {isCapturing && (
                 <View style={styles.scanningLabel}>
-                  <Text style={styles.scanningText}>SCANNING...</Text>
+                  <Text style={styles.scanningText}>UPLOADING...</Text>
                 </View>
               )}
             </View>
@@ -125,7 +198,7 @@ export default function FaceTrainingScreen() {
             <CheckCircle2 size={80} color={Colors.success} />
             <Text style={styles.successText}>Data Uploaded!</Text>
             <Text style={styles.successSubText}>
-              Your face data has been sent to the Central CCTV Database. 
+              Your face data has been sent to the Central CCTV Database.
               Please wait for faculty approval to finalize the registration.
             </Text>
           </View>
@@ -141,8 +214,8 @@ export default function FaceTrainingScreen() {
         )}
 
         {step === 1 && (
-          <TouchableOpacity 
-            style={[styles.captureBtn, isCapturing && styles.captureBtnDisabled]} 
+          <TouchableOpacity
+            style={[styles.captureBtn, isCapturing && styles.captureBtnDisabled]}
             onPress={handleCapture}
             disabled={isCapturing}
           >
@@ -165,7 +238,7 @@ export default function FaceTrainingScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.background,
+    backgroundColor: '#FAFAFA',
   },
   header: {
     flexDirection: 'row',
@@ -181,7 +254,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: Colors.text,
+    color: '#000',
   },
   content: {
     flex: 1,
@@ -202,13 +275,13 @@ const styles = StyleSheet.create({
   stepTitle: {
     fontSize: 24,
     fontWeight: '800',
-    color: Colors.text,
+    color: '#000',
     marginBottom: 10,
     textAlign: 'center',
   },
   stepDesc: {
     fontSize: 14,
-    color: Colors.textSecondary,
+    color: '#666',
     textAlign: 'center',
     marginBottom: 30,
     lineHeight: 22,
@@ -221,14 +294,14 @@ const styles = StyleSheet.create({
     width: '100%',
     gap: 12,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: '#E0E0E0',
   },
   infoText: {
     fontSize: 14,
-    color: Colors.text,
+    color: '#333',
     fontWeight: '500',
   },
-  
+
   // Camera Styles
   cameraContainer: {
     width: CAMERA_SIZE,
@@ -237,7 +310,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     position: 'relative',
     borderWidth: 4,
-    borderColor: Colors.border,
+    borderColor: '#E0E0E0',
     marginTop: 20,
   },
   camera: {
@@ -257,7 +330,7 @@ const styles = StyleSheet.create({
     borderStyle: 'dashed',
   },
   scanCircleActive: {
-    borderColor: Colors.success,
+    borderColor: '#4CAF50',
     borderWidth: 4,
   },
   scanningLabel: {
@@ -286,13 +359,13 @@ const styles = StyleSheet.create({
   successText: {
     fontSize: 24,
     fontWeight: '800',
-    color: Colors.text,
+    color: '#000',
     marginTop: 20,
     marginBottom: 10,
   },
   successSubText: {
     fontSize: 14,
-    color: Colors.textSecondary,
+    color: '#666',
     textAlign: 'center',
     paddingHorizontal: 20,
   },
@@ -303,13 +376,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   primaryBtn: {
-    backgroundColor: Colors.primary,
+    backgroundColor: '#000',
     paddingVertical: 16,
     paddingHorizontal: 32,
     borderRadius: 30,
     width: '100%',
     alignItems: 'center',
-    shadowColor: Colors.primary,
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
@@ -326,7 +399,7 @@ const styles = StyleSheet.create({
     height: 80,
     borderRadius: 40,
     borderWidth: 4,
-    borderColor: Colors.primary,
+    borderColor: '#000',
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: 'transparent',
@@ -338,7 +411,7 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: Colors.primary,
+    backgroundColor: '#000',
     justifyContent: 'center',
     alignItems: 'center',
   },

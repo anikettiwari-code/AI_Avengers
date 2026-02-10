@@ -1,11 +1,12 @@
 import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch, Modal, TextInput, Alert } from 'react-native';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
-import { 
-  Settings, 
-  ChevronRight, 
-  Sun, 
+import { supabase } from '../../utils/supabase'; // Import supabase
+import {
+  Settings,
+  ChevronRight,
+  Sun,
   Moon,
   LogOut,
   User,
@@ -17,25 +18,54 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 
 export default function ProfileScreen() {
-  const { logout, role, faceIdStatus } = useAuth();
+  const { logout, role, faceIdStatus, userProfile, session } = useAuth();
   const { isDarkMode, toggleTheme, colors } = useTheme();
   const router = useRouter();
 
+  // Use real user data from Supabase instead of hardcoded values
   const profileData = {
-    initials: role === 'student' ? 'AK' : 'SW',
+    initials: userProfile?.full_name
+      ? userProfile.full_name.split(' ').map((n: string) => n[0]).join('').toUpperCase()
+      : (role === 'student' ? 'S' : 'F'),
     roleLabel: role === 'student' ? 'STUDENT' : 'FACULTY',
-    name: role === 'student' ? 'Alisha Khan' : 'Dr. Sarah Williams',
-    id: role === 'student' ? 'STU-2024-001' : 'FAC-CS-101',
-    email: role === 'student' ? 'alisha.khan@attendify.edu' : 'sarah.williams@attendify.edu',
-    department: 'Computer Science & Engineering'
+    name: userProfile?.full_name || session?.user?.user_metadata?.full_name || 'User',
+    id: userProfile?.student_id || session?.user?.user_metadata?.student_id || 'N/A',
+    email: userProfile?.email || session?.user?.email || 'N/A',
+    department: userProfile?.department || 'Not Set',
+    phone: userProfile?.phone_number || '' // Added phone
   };
 
   const isStudent = role === 'student';
+  const [editModalVisible, setEditModalVisible] = React.useState(false);
+  const [dept, setDept] = React.useState(profileData.department);
+  const [phone, setPhone] = React.useState(profileData.phone);
+
+  const saveProfile = async () => {
+    try {
+      const updates = {
+        department: dept,
+        phone_number: phone,
+        updated_at: new Date(),
+      };
+
+      const { error } = await supabase
+        .from('profiles')
+        .update(updates)
+        .eq('id', userProfile?.id || session?.user?.id);
+
+      if (error) throw error;
+
+      Alert.alert('Success', 'Profile updated successfully');
+      setEditModalVisible(false);
+    } catch (error: any) {
+      Alert.alert('Error', error.message);
+    }
+  };
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        
+
         {/* Avatar Header */}
         <View style={styles.avatarSection}>
           <View style={[styles.avatarContainer, { backgroundColor: colors.success, shadowColor: colors.success }]}>
@@ -49,9 +79,9 @@ export default function ProfileScreen() {
         {/* Biometric Status (Student Only) */}
         {isStudent && (
           <View style={styles.biometricSection}>
-             <TouchableOpacity 
+            <TouchableOpacity
               style={[
-                styles.bioCard, 
+                styles.bioCard,
                 { backgroundColor: colors.surface, borderColor: colors.primary, shadowColor: colors.primary },
                 faceIdStatus === 'verified' && { borderColor: colors.success, backgroundColor: colors.successBg },
                 faceIdStatus === 'pending' && { borderColor: colors.warning, backgroundColor: colors.warningBg }
@@ -74,12 +104,12 @@ export default function ProfileScreen() {
               </View>
               <View style={styles.bioContent}>
                 <Text style={[styles.bioTitle, { color: colors.text }]}>
-                  {faceIdStatus === 'verified' ? 'Face ID Verified' : 
-                   faceIdStatus === 'pending' ? 'Verification Pending' : 'Setup Face ID'}
+                  {faceIdStatus === 'verified' ? 'Face ID Verified' :
+                    faceIdStatus === 'pending' ? 'Verification Pending' : 'Setup Face ID'}
                 </Text>
                 <Text style={[styles.bioDesc, { color: colors.textSecondary }]}>
-                  {faceIdStatus === 'verified' ? 'You can now use automated attendance.' : 
-                   faceIdStatus === 'pending' ? 'Waiting for faculty approval.' : 'Train camera for automated attendance.'}
+                  {faceIdStatus === 'verified' ? 'You can now use automated attendance.' :
+                    faceIdStatus === 'pending' ? 'Waiting for faculty approval.' : 'Train camera for automated attendance.'}
                 </Text>
               </View>
               {faceIdStatus === 'not_set' && <ChevronRight size={20} color={colors.textSecondary} />}
@@ -91,16 +121,31 @@ export default function ProfileScreen() {
         <View style={styles.sectionHeader}>
           <User size={16} color={colors.text} style={styles.sectionIcon} />
           <Text style={[styles.sectionTitle, { color: colors.text }]}>Personal Information</Text>
+          {isStudent && (
+            <TouchableOpacity onPress={() => setEditModalVisible(true)}>
+              <Text style={{ color: colors.primary, fontWeight: '700', fontSize: 12 }}>EDIT</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <InfoField label="FULL NAME" value={profileData.name} colors={colors} />
           <Divider colors={colors} />
-          <InfoField label="USER ID / ROLL NUMBER" value={profileData.id} colors={colors} />
+          <InfoField
+            label={role === 'teacher' ? "TEACHER ID" : "STUDENT ID / ROLL NO"}
+            value={profileData.id}
+            colors={colors}
+          />
           <Divider colors={colors} />
           <InfoField label="EMAIL" value={profileData.email} colors={colors} />
           <Divider colors={colors} />
           <InfoField label="DEPARTMENT" value={profileData.department} isLast colors={colors} />
+          {profileData.phone && (
+            <>
+              <Divider colors={colors} />
+              <InfoField label="PHONE" value={profileData.phone} isLast colors={colors} />
+            </>
+          )}
         </View>
 
         {/* Settings */}
@@ -114,7 +159,7 @@ export default function ProfileScreen() {
           <Divider colors={colors} />
           <SettingItem label="Notification Preferences" colors={colors} />
           <Divider colors={colors} />
-          
+
           <View style={styles.settingRow}>
             <Text style={[styles.settingLabel, { color: colors.text }]}>Dark Mode</Text>
             <View style={styles.toggleContainer}>
@@ -132,15 +177,63 @@ export default function ProfileScreen() {
               />
             </View>
           </View>
-          
+
           <Divider colors={colors} />
           <SettingItem label="Privacy Settings" isLast colors={colors} />
         </View>
 
+        {/* Edit Profile Modal */}
+        <Modal
+          animationType="slide"
+          transparent={true}
+          visible={editModalVisible}
+          onRequestClose={() => setEditModalVisible(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Edit Profile</Text>
+
+              <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Department</Text>
+              <TextInput
+                style={[styles.input, { color: colors.text, borderColor: colors.border }]}
+                value={dept}
+                onChangeText={setDept}
+                placeholder="Enter Department"
+                placeholderTextColor={colors.textSecondary}
+              />
+
+              <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Phone Number</Text>
+              <TextInput
+                style={[styles.input, { color: colors.text, borderColor: colors.border }]}
+                value={phone}
+                onChangeText={setPhone}
+                placeholder="Enter Phone"
+                keyboardType="phone-pad"
+                placeholderTextColor={colors.textSecondary}
+              />
+
+              <View style={styles.modalButtons}>
+                <TouchableOpacity
+                  style={[styles.modalBtn, { backgroundColor: colors.errorBg }]}
+                  onPress={() => setEditModalVisible(false)}
+                >
+                  <Text style={{ color: colors.error, fontWeight: '700' }}>CANCEL</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalBtn, { backgroundColor: colors.primary }]}
+                  onPress={saveProfile}
+                >
+                  <Text style={{ color: '#FFF', fontWeight: '700' }}>SAVE</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
         {/* Logout Button */}
-        <TouchableOpacity 
-          style={[styles.logoutBtn, { backgroundColor: colors.surface, borderColor: colors.errorBg }]} 
-          onPress={logout} 
+        <TouchableOpacity
+          style={[styles.logoutBtn, { backgroundColor: colors.surface, borderColor: colors.errorBg }]}
+          onPress={logout}
           activeOpacity={0.8}
         >
           <LogOut size={18} color={colors.error} style={{ marginRight: 8 }} />
@@ -190,7 +283,7 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingTop: 40,
   },
-  
+
   // Avatar Section
   avatarSection: {
     alignItems: 'center',
@@ -286,7 +379,7 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 1,
   },
-  
+
   // Info Fields
   infoField: {
     paddingVertical: 12,
@@ -318,7 +411,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
-  
+
   // Utilities
   divider: {
     height: 1,
@@ -353,5 +446,50 @@ const styles = StyleSheet.create({
   },
   footerSubText: {
     fontSize: 10,
+  },
+
+  // Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalContent: {
+    borderRadius: 16,
+    padding: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    marginBottom: 20,
+  },
+  inputLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+  },
+  input: {
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 14,
+    marginBottom: 20,
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+  },
+  modalBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
   },
 });

@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+opencv-python
+deepface
+tensorflow
+tf-keras
+sqlalchemy
+psycopg2-binary
+python-multipart
+jose[cryptography]
+passlib[bcrypt]
+supabase
+python-dotenv

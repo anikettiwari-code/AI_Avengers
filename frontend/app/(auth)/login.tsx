@@ -1,24 +1,24 @@
 import React, { useState } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TextInput, 
-  TouchableOpacity, 
-  KeyboardAvoidingView, 
-  Platform, 
+import {
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  KeyboardAvoidingView,
+  Platform,
   ScrollView,
   LayoutAnimation,
   UIManager
 } from 'react-native';
 import { Colors } from '../../constants/Colors';
 import { useAuth } from '../../context/AuthContext';
-import { 
-  Shield, 
-  Mail, 
-  Lock, 
-  Linkedin, 
-  Github 
+import {
+  Shield,
+  Mail,
+  Lock,
+  Linkedin,
+  Github
 } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 
@@ -28,16 +28,34 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 }
 
 export default function LoginScreen() {
-  const { role, setRole, login } = useAuth();
+  const { role, setRole, login, register } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [studentId, setStudentId] = useState('');
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [error, setError] = useState('');
 
   const toggleRole = () => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setRole(role === 'student' ? 'faculty' : 'student');
-    // Clear inputs on switch for better UX
     setEmail('');
     setPassword('');
+  };
+
+  const handleAuth = async () => {
+    setError('');
+    if (isRegistering) {
+      if (!fullName || !studentId) {
+        setError('Please fill all fields');
+        return;
+      }
+      const { error } = await register(email, password, fullName, studentId);
+      if (error) setError(error.message);
+    } else {
+      const { error } = await login(email, password);
+      if (error) setError(error.message);
+    }
   };
 
   const isStudent = role === 'student';
@@ -45,13 +63,13 @@ export default function LoginScreen() {
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
-      
-      <KeyboardAvoidingView 
+
+      <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.keyboardView}
       >
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-          
+
           {/* Header Logo */}
           <View style={styles.header}>
             <View style={styles.logoBadge}>
@@ -62,32 +80,44 @@ export default function LoginScreen() {
 
           {/* Main Card */}
           <View style={styles.card}>
-            
+
             {/* Top Section: Login Form */}
             <View style={styles.formSection}>
               <Text style={styles.formTitle}>
-                {isStudent ? 'Student Login' : 'Faculty Login'}
+                {isRegistering ? 'Create Account' : (isStudent ? 'Student Login' : 'Faculty Login')}
               </Text>
 
-              {/* Social Icons */}
-              <View style={styles.socialRow}>
-                <TouchableOpacity style={styles.socialBtn}>
-                  <Linkedin size={20} color="#0077B5" />
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.socialBtn}>
-                  <Github size={20} color="#333" />
-                </TouchableOpacity>
-              </View>
-
-              <Text style={styles.dividerText}>OR USE YOUR ACCOUNT</Text>
+              {error ? <Text style={{ color: 'red', marginBottom: 10 }}>{error}</Text> : null}
 
               {/* Inputs */}
               <View style={styles.inputWrapper}>
+                {isRegistering && (
+                  <>
+                    <View style={styles.inputContainer}>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Full Name"
+                        placeholderTextColor="#999"
+                        value={fullName}
+                        onChangeText={setFullName}
+                      />
+                    </View>
+                    <View style={styles.inputContainer}>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Student ID"
+                        placeholderTextColor="#999"
+                        value={studentId}
+                        onChangeText={setStudentId}
+                      />
+                    </View>
+                  </>
+                )}
                 <View style={styles.inputContainer}>
                   <Mail size={20} color="#CCC" style={styles.inputIcon} />
                   <TextInput
                     style={styles.input}
-                    placeholder={isStudent ? "Student ID / Username" : "Faculty ID / Username"}
+                    placeholder="Email"
                     placeholderTextColor="#999"
                     value={email}
                     onChangeText={setEmail}
@@ -108,30 +138,40 @@ export default function LoginScreen() {
                 </View>
               </View>
 
-              <TouchableOpacity style={styles.forgotBtn}>
-                <Text style={styles.forgotText}>Forgot your password?</Text>
+              {!isRegistering && (
+                <TouchableOpacity style={styles.forgotBtn}>
+                  <Text style={styles.forgotText}>Forgot your password?</Text>
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity style={styles.signInBtn} onPress={handleAuth} activeOpacity={0.9}>
+                <Text style={styles.signInText}>{isRegistering ? 'SIGN UP' : 'SIGN IN'}</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.signInBtn} onPress={login} activeOpacity={0.9}>
-                <Text style={styles.signInText}>SIGN IN</Text>
+              <TouchableOpacity onPress={() => setIsRegistering(!isRegistering)} style={{ marginTop: 15 }}>
+                <Text style={{ color: Colors.primary, fontSize: 12, fontWeight: '600' }}>
+                  {isRegistering ? 'Already have an account? Sign In' : "Don't have an account? Sign Up"}
+                </Text>
               </TouchableOpacity>
             </View>
 
             {/* Bottom Section: Role Switcher */}
-            <View style={styles.switchSection}>
-              <Text style={styles.switchTitle}>
-                {isStudent ? 'Welcome Faculty!' : 'Welcome Student!'}
-              </Text>
-              <Text style={styles.switchSubtitle}>
-                Enter your personal details and start your journey with us
-              </Text>
-              
-              <TouchableOpacity style={styles.switchBtn} onPress={toggleRole} activeOpacity={0.8}>
-                <Text style={styles.switchBtnText}>
-                  {isStudent ? 'SIGN IN (FACULTY)' : 'SIGN IN (STUDENT)'}
+            {!isRegistering && (
+              <View style={styles.switchSection}>
+                <Text style={styles.switchTitle}>
+                  {isStudent ? 'Welcome Faculty!' : 'Welcome Student!'}
                 </Text>
-              </TouchableOpacity>
-            </View>
+                <Text style={styles.switchSubtitle}>
+                  Enter your personal details and start your journey with us
+                </Text>
+
+                <TouchableOpacity style={styles.switchBtn} onPress={toggleRole} activeOpacity={0.8}>
+                  <Text style={styles.switchBtnText}>
+                    {isStudent ? 'SIGN IN (FACULTY)' : 'SIGN IN (STUDENT)'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
 
           </View>
 

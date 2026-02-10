@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Image, Modal, TextInput } from 'react-native';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
+import { supabase } from '../../utils/supabase';
+import { API_BASE_URL } from '../../constants/apiConfig';
 import {
   BookOpen,
   Users,
@@ -16,7 +18,10 @@ import {
   AlertCircle,
   X,
   Database,
-  Server
+  Server,
+
+  Bell,
+  Send
 } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -35,14 +40,20 @@ export default function Dashboard() {
 
 function StudentDashboard({ colors }: { colors: any }) {
   const router = useRouter();
-  const { faceIdStatus } = useAuth();
+  const { faceIdStatus, userProfile } = useAuth();
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
 
         {/* Header */}
-        <DashboardHeader name="Alisha Khan" initials="AK" role="STUDENT" colors={colors} />
+        <DashboardHeader
+          name={userProfile?.full_name || "Student"}
+          initials={userProfile?.full_name?.split(' ').map((n: any) => n[0]).join('').toUpperCase() || "S"}
+          role="STUDENT"
+          colors={colors}
+          showNotificationIcon={true}
+        />
 
         {/* Welcome Section */}
         <View style={styles.welcomeSection}>
@@ -223,31 +234,81 @@ function AttendanceItem({ subject, time, initial, status, colors }: any) {
 
 function FacultyDashboard({ colors }: { colors: any }) {
   const router = useRouter();
-  const { faceIdStatus, setFaceIdStatus } = useAuth();
-  const [hasPendingRequest, setHasPendingRequest] = useState(faceIdStatus === 'pending');
+  const { userProfile } = useAuth();
+  const [pendingApprovals, setPendingApprovals] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  React.useEffect(() => {
-    setHasPendingRequest(faceIdStatus === 'pending');
-  }, [faceIdStatus]);
+  useEffect(() => {
+    fetchPendingApprovals();
+  }, []);
 
-  const handleApprove = () => {
-    Alert.alert(
-      "Database Updated",
-      "Student face data has been added to the CCTV model successfully."
-    );
-    setFaceIdStatus('verified');
+  const fetchPendingApprovals = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('pending_approvals')
+        .select('*')
+        .eq('status', 'pending');
+
+      console.log('DEBUG: Fetched pending approvals:', data);
+      if (error) console.error('DEBUG: Fetch error:', error);
+
+      if (data) {
+        setPendingApprovals(data);
+      }
+    } catch (e) {
+      console.log('Error fetching pending:', e);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleReject = () => {
-    Alert.alert("Rejected", "Request removed.");
-    setFaceIdStatus('not_set');
+  const handleApprove = async (id: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/teacher/approve-biometrics`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pending_id: id }),
+      });
+
+      if (response.ok) {
+        Alert.alert("Success", "Student face data has been approved and added to CCTV model.");
+        fetchPendingApprovals();
+      } else {
+        Alert.alert("Error", "Approval failed.");
+      }
+    } catch (e) {
+      Alert.alert("Error", "Connection error.");
+    }
+  };
+
+  const handleReject = async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from('pending_approvals')
+        .update({ status: 'rejected' })
+        .eq('id', id);
+
+      if (!error) {
+        Alert.alert("Rejected", "Request removed.");
+        fetchPendingApprovals();
+      }
+    } catch (e) {
+      Alert.alert("Error", "Action failed.");
+    }
   };
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
 
-        <DashboardHeader name="Dr. Sarah Williams" initials="SW" role="FACULTY" colors={colors} />
+        <DashboardHeader
+          name={userProfile?.full_name || "Faculty"}
+          initials={userProfile?.full_name?.split(' ').map((n: any) => n[0]).join('').toUpperCase() || "F"}
+          role="FACULTY"
+          colors={colors}
+          showNotificationIcon={true}
+          isTeacher={true}
+        />
 
         <View style={styles.welcomeSection}>
           <Text style={[styles.welcomeTitle, { color: colors.text }]}>Welcome back, Sarah!</Text>
@@ -255,17 +316,26 @@ function FacultyDashboard({ colors }: { colors: any }) {
         </View>
 
         {/* Pending Approvals Section */}
-        {hasPendingRequest && (
-          <View style={[styles.approvalCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        {pendingApprovals.map((req) => (
+          <View key={req.id} style={[styles.approvalCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <View style={styles.approvalHeader}>
               <View style={[styles.approvalIconBg, { backgroundColor: colors.accentBlue }]}>
                 <Database size={20} color={colors.primary} />
               </View>
               <View>
                 <Text style={[styles.approvalTitle, { color: colors.text }]}>Incoming Biometric Data</Text>
-                <Text style={[styles.approvalSub, { color: colors.textSecondary }]}>Alisha Khan • ST-2025-001</Text>
+                <Text style={[styles.approvalSub, { color: colors.textSecondary }]}>{req.full_name} • {req.student_id}</Text>
               </View>
             </View>
+
+            {req.selfie_url && (
+              <View style={styles.selfieContainer}>
+                <Image
+                  source={{ uri: supabase.storage.from('selfies').getPublicUrl(req.selfie_url).data.publicUrl }}
+                  style={styles.selfieImage}
+                />
+              </View>
+            )}
 
             <View style={styles.approvalMeta}>
               <Server size={12} color={colors.textSecondary} />
@@ -273,17 +343,17 @@ function FacultyDashboard({ colors }: { colors: any }) {
             </View>
 
             <View style={styles.approvalActions}>
-              <TouchableOpacity style={[styles.rejectBtn, { backgroundColor: colors.errorBg }]} onPress={handleReject}>
+              <TouchableOpacity style={[styles.rejectBtn, { backgroundColor: colors.errorBg }]} onPress={() => handleReject(req.id)}>
                 <X size={16} color={colors.error} />
                 <Text style={[styles.rejectText, { color: colors.error }]}>Deny</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.approveBtn, { backgroundColor: colors.success }]} onPress={handleApprove}>
+              <TouchableOpacity style={[styles.approveBtn, { backgroundColor: colors.success }]} onPress={() => handleApprove(req.id)}>
                 <Check size={16} color="#FFF" />
                 <Text style={styles.approveText}>Approve & Add to DB</Text>
               </TouchableOpacity>
             </View>
           </View>
-        )}
+        ))}
 
         <View style={styles.statsRow}>
           <StatCard
@@ -369,7 +439,37 @@ function FacultyDashboard({ colors }: { colors: any }) {
 
 // --- Shared Components ---
 
-function DashboardHeader({ name, initials, role, colors }: any) {
+function DashboardHeader({ name, initials, role, colors, showNotificationIcon, isTeacher }: any) {
+  const [modalVisible, setModalVisible] = useState(false);
+  const [notifs, setNotifs] = useState<any[]>([]);
+  const [newTitle, setNewTitle] = useState('');
+  const [newMsg, setNewMsg] = useState('');
+
+  const fetchNotifs = async () => {
+    const { data } = await supabase.from('notifications').select('*').order('created_at', { ascending: false });
+    if (data) setNotifs(data);
+  };
+
+  const sendNotif = async () => {
+    if (!newTitle || !newMsg) return;
+    const { error } = await supabase.from('notifications').insert({
+      title: newTitle,
+      message: newMsg,
+      audience: 'all',
+      type: 'info'
+    });
+    if (!error) {
+      Alert.alert('Success', 'Notification Sent');
+      setNewTitle('');
+      setNewMsg('');
+      fetchNotifs();
+    }
+  };
+
+  useEffect(() => {
+    if (modalVisible) fetchNotifs();
+  }, [modalVisible]);
+
   return (
     <View style={styles.header}>
       <View style={styles.brandContainer}>
@@ -379,12 +479,64 @@ function DashboardHeader({ name, initials, role, colors }: any) {
         <Text style={[styles.brandName, { color: colors.primary }]}>Attendify</Text>
       </View>
 
-      <TouchableOpacity style={[styles.profilePill, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-        <View style={[styles.avatarContainer, { backgroundColor: colors.primaryDark }]}>
-          <Text style={styles.avatarText}>{initials}</Text>
+      <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center' }}>
+        {showNotificationIcon && (
+          <TouchableOpacity onPress={() => setModalVisible(true)}>
+            <Bell size={24} color={colors.text} />
+          </TouchableOpacity>
+        )}
+
+        <TouchableOpacity style={[styles.profilePill, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <View style={[styles.avatarContainer, { backgroundColor: colors.primaryDark }]}>
+            <Text style={styles.avatarText}>{initials}</Text>
+          </View>
+          <Text style={[styles.profileName, { color: colors.text }]}>{name}</Text>
+        </TouchableOpacity>
+      </View>
+
+      <Modal animationType="fade" transparent visible={modalVisible} onRequestClose={() => setModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.notifModal, { backgroundColor: colors.surface }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>{isTeacher ? "Manage Notifications" : "Notifications"}</Text>
+              <TouchableOpacity onPress={() => setModalVisible(false)}><X size={24} color={colors.text} /></TouchableOpacity>
+            </View>
+
+            {isTeacher && (
+              <View style={styles.createNotif}>
+                <Text style={[styles.sectionTitle, { fontSize: 14, color: colors.text, marginBottom: 8 }]}>Send New Alert</Text>
+                <TextInput
+                  placeholder="Title"
+                  placeholderTextColor={colors.textSecondary}
+                  value={newTitle}
+                  onChangeText={setNewTitle}
+                  style={[styles.input, { color: colors.text, borderColor: colors.border }]}
+                />
+                <TextInput
+                  placeholder="Message"
+                  placeholderTextColor={colors.textSecondary}
+                  value={newMsg}
+                  onChangeText={setNewMsg}
+                  style={[styles.input, { color: colors.text, borderColor: colors.border }]}
+                />
+                <TouchableOpacity style={[styles.sendBtn, { backgroundColor: colors.primary }]} onPress={sendNotif}>
+                  <Text style={{ color: '#FFF', fontWeight: '700' }}>SEND ALERT</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            <ScrollView style={{ maxHeight: 300 }}>
+              {notifs.map(n => (
+                <View key={n.id} style={[styles.notifItem, { borderBottomColor: colors.border }]}>
+                  <Text style={[styles.notifTitle, { color: colors.text }]}>{n.title}</Text>
+                  <Text style={[styles.notifMsg, { color: colors.textSecondary }]}>{n.message}</Text>
+                </View>
+              ))}
+              {notifs.length === 0 && <Text style={{ color: colors.textSecondary, textAlign: 'center', padding: 20 }}>No notifications</Text>}
+            </ScrollView>
+          </View>
         </View>
-        <Text style={[styles.profileName, { color: colors.text }]}>{name}</Text>
-      </TouchableOpacity>
+      </Modal>
     </View>
   );
 }
@@ -860,6 +1012,73 @@ const styles = StyleSheet.create({
   },
   rejectText: {
     fontWeight: '700',
+    fontSize: 12,
+  },
+  selfieContainer: {
+    width: '100%',
+    height: 150,
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginBottom: 16,
+    marginLeft: 52,
+    maxWidth: 200,
+    borderWidth: 1,
+    borderColor: '#EEE',
+  },
+  selfieImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+
+  // Notification Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  notifModal: {
+    padding: 20,
+    borderRadius: 16,
+    maxHeight: '80%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 20,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  createNotif: {
+    marginBottom: 20,
+    paddingBottom: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  input: {
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 10,
+  },
+  sendBtn: {
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  notifItem: {
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  notifTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  notifMsg: {
     fontSize: 12,
   },
 });
